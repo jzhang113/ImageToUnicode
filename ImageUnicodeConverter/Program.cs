@@ -1,6 +1,5 @@
 ﻿using Microsoft.VisualBasic;
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
@@ -27,6 +26,10 @@ namespace ImageUnicodeConverter
             if (args.Length >= 2)
                 lineWidth = int.Parse(args[1]);
 
+            bool textOut = false;
+            if (args.Length >= 3)
+                textOut = true;
+
             Bitmap image = new Bitmap(imagePath);
             Console.WriteLine($"The image is {image.Height} x {image.Width}");
 
@@ -37,13 +40,61 @@ namespace ImageUnicodeConverter
             Stopwatch timer = new Stopwatch();
             timer.Start();
 
+            ColorInfo[,] tiles = AverageColorInfo(image, lineHeight, lineWidth);
+            if (textOut)
+                WriteToText(tiles, lineWidth, lineHeight);
+            else
+                WriteToRex(tiles, lineWidth, lineHeight);
+
+            timer.Stop();
+            Console.WriteLine($"Converted image in {timer.Elapsed}");
+        }
+
+        private static void WriteToRex(ColorInfo[,] tiles, int lineWidth, int lineHeight)
+        {
+            using (BinaryWriter bw = new BinaryWriter(File.OpenWrite("out.xp")))
+            {
+                // write xp header info
+                bw.Write(1);
+                bw.Write(1);
+                bw.Write(tiles.GetLength(1)); // width
+                bw.Write(tiles.GetLength(0)); // height
+
+                // write pixel information
+                foreach (ColorInfo info in tiles)
+                {
+                    // write character code
+                    if (info.Brightness > 0.875)
+                        bw.Write(0);
+                    else if (info.Brightness > 0.625)
+                        bw.Write(176);
+                    else if (info.Brightness > 0.375)
+                        bw.Write(177);
+                    else if (info.Brightness > 0.125)
+                        bw.Write(178);
+                    else
+                        bw.Write(219);
+
+                    // write foreground color
+                    bw.Write(info.R);
+                    bw.Write(info.G);
+                    bw.Write(info.B);
+
+                    // write background color
+                    bw.Write((byte)0);
+                    bw.Write((byte)0);
+                    bw.Write((byte)0);
+                }
+            }
+        }
+
+        private static void WriteToText(ColorInfo[,] tiles, int lineWidth, int lineHeight)
+        {
             using (StreamWriter sw = new StreamWriter("out.txt", false, Encoding.UTF8))
             {
-                foreach (ColorInfo info in AverageColorInfo(image, lineHeight, lineWidth))
+                int position = 0;
+                foreach (ColorInfo info in tiles)
                 {
-                    if (info.X == 0)
-                        sw.WriteLine();
-
                     if (info.Brightness > 0.875)
                     {
                         sw.Write(' ');
@@ -64,18 +115,24 @@ namespace ImageUnicodeConverter
                     {
                         sw.Write(Strings.ChrW('\u2588'));
                     }
+
+                    if (++position >= lineWidth)
+                    {
+                        position = 0;
+                        sw.WriteLine();
+                    }
                 }
             }
-
-            timer.Stop();
-            Console.WriteLine($"Converted image in {timer.Elapsed}");
         }
 
-        private static IEnumerable<ColorInfo> AverageColorInfo(Bitmap image, int lineHeight, int lineWidth)
+        private static ColorInfo[,] AverageColorInfo(Bitmap image, int lineHeight, int lineWidth)
         {
             int width = image.Width / lineWidth;
             int height = image.Height / lineHeight;
             int pixelCount = width * height;
+
+            // foreach goes through the rightmost index first
+            ColorInfo[,] output = new ColorInfo[lineHeight, lineWidth];
 
             for (int y = 0; y < lineHeight; y++)
             {
@@ -103,25 +160,23 @@ namespace ImageUnicodeConverter
                     byte avgGreen = (byte)(totalGreen / pixelCount);
                     byte avgBlue = (byte)(totalBlue / pixelCount);
 
-                    yield return new ColorInfo(x, y, avgRed, avgGreen, avgBlue, avgBright);
+                    output[y, x] = new ColorInfo(avgRed, avgGreen, avgBlue, avgBright);
                 }
             }
+
+            return output;
         }
     }
 
     struct ColorInfo
     {
-        internal int X { get; }
-        internal int Y { get; }
         internal byte R { get; }
         internal byte G { get; }
         internal byte B { get; }
         internal float Brightness { get; }
 
-        public ColorInfo(int x, int y, byte r, byte g, byte b, float bright)
+        public ColorInfo(byte r, byte g, byte b, float bright)
         {
-            X = x;
-            Y = y;
             R = r;
             G = g;
             B = b;
