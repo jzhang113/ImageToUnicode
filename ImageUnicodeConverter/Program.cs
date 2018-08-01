@@ -3,6 +3,7 @@ using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.IO.Compression;
 using System.Text;
 
 namespace ImageUnicodeConverter
@@ -42,85 +43,97 @@ namespace ImageUnicodeConverter
 
             ColorInfo[,] tiles = AverageColorInfo(image, lineHeight, lineWidth);
             if (textOut)
-                WriteToText(tiles, lineWidth, lineHeight);
+                WriteToText(tiles);
             else
-                WriteToRex(tiles, lineWidth, lineHeight);
+                WriteToRex(tiles);
 
             timer.Stop();
             Console.WriteLine($"Converted image in {timer.Elapsed}");
         }
 
-        private static void WriteToRex(ColorInfo[,] tiles, int lineWidth, int lineHeight)
+        private static void WriteToRex(ColorInfo[,] tiles)
         {
-            using (BinaryWriter bw = new BinaryWriter(File.OpenWrite("out.xp")))
+            using (MemoryStream memStream = new MemoryStream())
             {
-                // write xp header info
-                bw.Write(1);
-                bw.Write(1);
-                bw.Write(tiles.GetLength(1)); // width
-                bw.Write(tiles.GetLength(0)); // height
-
-                // write pixel information
-                foreach (ColorInfo info in tiles)
+                using (BinaryWriter bw = new BinaryWriter(memStream))
                 {
-                    // write character code
-                    if (info.Brightness > 0.875)
-                        bw.Write(0);
-                    else if (info.Brightness > 0.625)
-                        bw.Write(176);
-                    else if (info.Brightness > 0.375)
-                        bw.Write(177);
-                    else if (info.Brightness > 0.125)
-                        bw.Write(178);
-                    else
-                        bw.Write(219);
+                    // write xp header info
+                    bw.Write(1); // version
+                    bw.Write(1); // layers
+                    bw.Write(tiles.GetLength(0)); // width
+                    bw.Write(tiles.GetLength(1)); // height
 
-                    // write foreground color
-                    bw.Write(info.R);
-                    bw.Write(info.G);
-                    bw.Write(info.B);
+                    // write pixel information
+                    foreach (ColorInfo info in tiles)
+                    {
+                        // write character code
+                        if (info.Brightness > 0.875)
+                            bw.Write(0);
+                        else if (info.Brightness > 0.625)
+                            bw.Write(176);
+                        else if (info.Brightness > 0.375)
+                            bw.Write(177);
+                        else if (info.Brightness > 0.125)
+                            bw.Write(178);
+                        else
+                            bw.Write(219);
 
-                    // write background color
-                    bw.Write((byte)0);
-                    bw.Write((byte)0);
-                    bw.Write((byte)0);
+                        const double multiplier = 0.05;
+                        // calculate a shade for the foreground color
+                        bw.Write((byte)Math.Max(info.R - 20, 0));
+                        bw.Write((byte)Math.Max(info.G - 20, 0));
+                        bw.Write((byte)Math.Max(info.B - 20, 0));
+
+                        // calculate a tint for the background color
+                        bw.Write((byte)Math.Min(info.R + 20, 255));
+                        bw.Write((byte)Math.Min(info.G + 20, 255));
+                        bw.Write((byte)Math.Min(info.B + 20, 255));
+                    }
+                }
+
+                memStream.Flush();
+                byte[] buffer = memStream.GetBuffer();
+
+                using (GZipStream zip = new GZipStream(File.OpenWrite("out.xp"), CompressionMode.Compress))
+                {
+                    zip.Write(buffer, 0, buffer.Length);
                 }
             }
         }
 
-        private static void WriteToText(ColorInfo[,] tiles, int lineWidth, int lineHeight)
+        private static void WriteToText(ColorInfo[,] tiles)
         {
             using (StreamWriter sw = new StreamWriter("out.txt", false, Encoding.UTF8))
             {
-                int position = 0;
-                foreach (ColorInfo info in tiles)
+                for (int y = 0; y < tiles.GetLength(1); y++)
                 {
-                    if (info.Brightness > 0.875)
+                    for (int x = 0; x < tiles.GetLength(0); x++)
                     {
-                        sw.Write(' ');
-                    }
-                    else if (info.Brightness > 0.625)
-                    {
-                        sw.Write(Strings.ChrW('\u2591'));
-                    }
-                    else if (info.Brightness > 0.375)
-                    {
-                        sw.Write(Strings.ChrW('\u2592'));
-                    }
-                    else if (info.Brightness > 0.125)
-                    {
-                        sw.Write(Strings.ChrW('\u2593'));
-                    }
-                    else
-                    {
-                        sw.Write(Strings.ChrW('\u2588'));
+                        ColorInfo info = tiles[x, y];
+
+                        if (info.Brightness > 0.875)
+                        {
+                            sw.Write(' ');
+                        }
+                        else if (info.Brightness > 0.625)
+                        {
+                            sw.Write(Strings.ChrW('\u2591'));
+                        }
+                        else if (info.Brightness > 0.375)
+                        {
+                            sw.Write(Strings.ChrW('\u2592'));
+                        }
+                        else if (info.Brightness > 0.125)
+                        {
+                            sw.Write(Strings.ChrW('\u2593'));
+                        }
+                        else
+                        {
+                            sw.Write(Strings.ChrW('\u2588'));
+                        }
                     }
 
-                    if (++position >= lineWidth)
-                    {
-                        position = 0;
-                        sw.WriteLine();
-                    }
+                    sw.WriteLine();
                 }
             }
         }
@@ -132,7 +145,7 @@ namespace ImageUnicodeConverter
             int pixelCount = width * height;
 
             // foreach goes through the rightmost index first
-            ColorInfo[,] output = new ColorInfo[lineHeight, lineWidth];
+            ColorInfo[,] output = new ColorInfo[lineWidth, lineHeight];
 
             for (int y = 0; y < lineHeight; y++)
             {
@@ -160,7 +173,7 @@ namespace ImageUnicodeConverter
                     byte avgGreen = (byte)(totalGreen / pixelCount);
                     byte avgBlue = (byte)(totalBlue / pixelCount);
 
-                    output[y, x] = new ColorInfo(avgRed, avgGreen, avgBlue, avgBright);
+                    output[x, y] = new ColorInfo(avgRed, avgGreen, avgBlue, avgBright);
                 }
             }
 
